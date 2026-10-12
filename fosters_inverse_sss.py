@@ -97,8 +97,8 @@ def fosters_inverse(raw, Ntmin, Ntmax, ntype):
     
     ## calculate sensor noise covariance
     if ntype=='E':
-        #N = mne.compute_raw_covariance(raw,tmin=0,tmax=10,rank="info",method='empirical')["data"]
-        N = mne.compute_raw_covariance(raw,rank="info",method='empirical')["data"]
+        N = mne.compute_raw_covariance(raw,tmin=Ntmin,tmax=Ntmax,rank="info",method='empirical')["data"]
+        #N = mne.compute_raw_covariance(raw,rank="info",method='empirical')["data"]
     if ntype =='OTP':
         ## calculate N using OTP method
         raw_otp = mne.preprocessing.oversampled_temporal_projection(raw, duration = 10)
@@ -106,7 +106,7 @@ def fosters_inverse(raw, Ntmin, Ntmax, ntype):
         del raw_otp
         N = sklearn.covariance.empirical_covariance(np.transpose(diff))  
     ## create data strcutre, indicates in "info" that some preprocessing akin to SSS has happened
-    raw_fos = mne.preprocessing.maxwell_filter(raw, origin=(0.,0.,0.), int_order=8, ext_order=3, calibration=None, coord_frame='meg', regularize='in', ignore_ref=True, bad_condition='error', mag_scale=100.0, extended_proj=(), verbose=None)  # just to get the info to indicate some Maxwell filtering was done etc.
+    raw_fos = mne.preprocessing.maxwell_filter(raw, origin=(0.,0.,0.), int_order=8, ext_order=3, calibration=None, coord_frame='meg', regularize='in', ignore_ref=True, bad_condition='ignore', mag_scale=100.0, extended_proj=(), verbose=None)  # just to get the info to indicate some Maxwell filtering was done etc.
     assert raw.info["bads"] == [] # double check bads were dropped
     
     ## Do foster's inverse!
