@@ -2,7 +2,7 @@
 
 from .basis import compute_basis
 from .methods import foster_operator, foster_prior, standard_sss
-from .noise import compute_noise_cov, normalize_noise_cov
+from .noise import compute_noise_cov
 from .reference import check_against_reference, reference_inverse
 
 __all__ = [
@@ -11,7 +11,6 @@ __all__ = [
     "compute_noise_cov",
     "foster_operator",
     "foster_prior",
-    "normalize_noise_cov",
     "standard_sss",
     "reference_inverse",
 ]

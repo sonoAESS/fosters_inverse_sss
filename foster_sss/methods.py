@@ -5,8 +5,6 @@ from __future__ import annotations
 import numpy as np
 from scipy.linalg import eigh, pinv
 
-from .noise import normalize_noise_cov
-
 PRIORS = ("foster", "noise_weighted")
 
 
@@ -45,8 +43,8 @@ def foster_prior(x_hat, pS_in, N, *, prior="noise_weighted", normalize=True, psd
     pS_in : ndarray, shape (n_mom, n_ch)
         Least-squares pseudoinverse of the internal basis.
     N : ndarray, shape (n_ch, n_ch)
-        Sensor noise covariance in physical units.  It is used as-is; pass
-        ``normalize_noise_cov(N)`` to use a unit-trace covariance.
+        Sensor noise covariance in physical units.  Its physical scale is
+        preserved because it determines the bias-variance balance.
     prior : "noise_weighted" | "foster"
         ``"noise_weighted"`` removes the noise contribution from the data
         covariance, projects onto the PSD cone, and optionally normalizes the
@@ -93,7 +91,6 @@ def foster_operator(
     normalize=True,
     psd=True,
     affine=True,
-    normalize_n=False,
     basis_scope="internal",
     n_use_in=None,
 ):
@@ -120,9 +117,6 @@ def foster_operator(
         Project the ``"noise_weighted"`` prior onto the PSD cone.
     affine : bool
         Add the affine term that preserves the mean moments.
-    normalize_n : bool
-        Divide ``N`` by its trace before building both the prior and the
-        estimator.
     basis_scope : "internal" | "full"
         ``"internal"`` uses only internal moments for the prior and the
         estimator.  ``"full"`` builds the prior and the estimator in the
@@ -156,8 +150,6 @@ def foster_operator(
         n_recon = int(n_use_in)
     else:
         n_recon = S_in.shape[1]
-    if normalize_n:
-        N = normalize_noise_cov(N)
     x_hat = pS_in @ data
     A = foster_prior(x_hat, pS_in, N, prior=prior, normalize=normalize, psd=psd)
     B = A @ S_in.T @ pinv(S_in @ A @ S_in.T + N, check_finite=False)

@@ -66,14 +66,6 @@ def build_parser():
         help="Method(s) to run; 'both' runs foster and noise_weighted.",
     )
     parser.add_argument(
-        "--normalize-n",
-        action="store_true",
-        help=(
-            "Also run both priors with N / trace(N). This adds "
-            "foster_norm_n and noise_weighted_norm_n to the comparison."
-        ),
-    )
-    parser.add_argument(
         "--regularize",
         choices=("in", "in_argmax", "None"),
         default="in",
@@ -147,7 +139,6 @@ def main(argv=None):
         raw=args.raw,
         out=args.out,
         method=args.method,
-        normalize_n=args.normalize_n,
         noise_raw=args.noise_raw,
         noise_cov=args.noise_cov,
         clean=args.clean,

@@ -25,7 +25,6 @@ class ComparisonConfig:
     raw: str
     out: str = "results"
     method: str = "both"
-    normalize_n: bool = False
     noise_raw: str | None = None
     noise_cov: str | None = None
     clean: str | None = None
@@ -54,10 +53,6 @@ def selected_priors(method):
     if method in ("foster", "noise_weighted"):
         return (method,)
     return ()
-
-
-def _method_label(prior, normalize_n):
-    return f"{prior}_norm_n" if normalize_n else prior
 
 
 def _load_noise(config, raw):
@@ -90,7 +85,7 @@ def _load_noise(config, raw):
 
 
 def _evaluate_method(
-    S_in, pS_in, N, phi, *, prior, normalize_n, basis_scope="internal", n_use_in=None
+    S_in, pS_in, N, phi, *, prior, basis_scope="internal", n_use_in=None
 ):
     try:
         recon, _, _ = foster_operator(
@@ -100,7 +95,6 @@ def _evaluate_method(
             phi,
             prior=prior,
             affine=True,
-            normalize_n=normalize_n,
             basis_scope=basis_scope,
             n_use_in=n_use_in,
         )
@@ -177,21 +171,18 @@ def run_comparison(config):
     results = {"sss": standard_sss(S_in, pS_in, phi)}
     statuses = {"sss": ("ok", "")}
     for prior in selected_priors(config.method):
-        for normalize_n in (False, True) if config.normalize_n else (False,):
-            name = _method_label(prior, normalize_n)
-            recon, status, note = _evaluate_method(
-                S_use,
-                pS_use,
-                N,
-                phi,
-                prior=prior,
-                normalize_n=normalize_n,
-                basis_scope=config.basis_scope,
-                n_use_in=n_use_in,
-            )
-            statuses[name] = (status, note)
-            if recon is not None:
-                results[name] = recon
+        recon, status, note = _evaluate_method(
+            S_use,
+            pS_use,
+            N,
+            phi,
+            prior=prior,
+            basis_scope=config.basis_scope,
+            n_use_in=n_use_in,
+        )
+        statuses[prior] = (status, note)
+        if recon is not None:
+            results[prior] = recon
 
     clean_data = None
     if config.clean is not None:

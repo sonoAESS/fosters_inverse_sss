@@ -6,7 +6,6 @@ from numpy.testing import assert_allclose
 from scipy.linalg import pinv
 
 from foster_sss.methods import foster_operator, foster_prior, standard_sss
-from foster_sss.noise import normalize_noise_cov
 
 PRIORS = ("foster", "noise_weighted")
 
@@ -120,68 +119,6 @@ def test_bad_shapes_raise(synthetic):
         foster_operator(S, pS, N, data[:-1])
     with pytest.raises(ValueError, match="At least two"):
         foster_operator(S, pS, N, data[:, :1])
-
-
-def test_normalize_noise_cov_has_unit_trace(synthetic):
-    _, _, N, _ = synthetic
-    N_norm = normalize_noise_cov(N)
-    assert_allclose(np.trace(N_norm), 1.0)
-    assert_allclose(N_norm, N_norm.T)
-
-
-def test_normalize_noise_cov_is_scale_invariant(synthetic):
-    _, _, N, _ = synthetic
-    assert_allclose(normalize_noise_cov(10.0 * N), normalize_noise_cov(N))
-
-
-def test_normalize_noise_cov_rejects_nonpositive_trace(synthetic):
-    _, _, N, _ = synthetic
-    with pytest.raises(ValueError, match="positive trace"):
-        normalize_noise_cov(-N)
-    with pytest.raises(ValueError, match="square"):
-        normalize_noise_cov(N[:-1])
-
-
-@pytest.mark.parametrize("prior", PRIORS)
-def test_normalize_n_matches_normalized_input(synthetic, prior):
-    S, pS, N, data = synthetic
-    _, B1, _ = foster_operator(
-        S, pS, N, data, prior=prior, normalize_n=True
-    )
-    _, B2, _ = foster_operator(
-        S, pS, normalize_noise_cov(N), data, prior=prior
-    )
-    assert_allclose(B1, B2)
-
-
-@pytest.mark.parametrize("prior", PRIORS)
-def test_normalize_n_is_scale_invariant(synthetic, prior):
-    S, pS, N, data = synthetic
-    _, B1, _ = foster_operator(
-        S, pS, N, data, prior=prior, normalize_n=True
-    )
-    _, B2, _ = foster_operator(
-        S, pS, 10.0 * N, data, prior=prior, normalize_n=True
-    )
-    assert_allclose(B1, B2)
-
-
-@pytest.mark.parametrize("prior", PRIORS)
-def test_normalize_n_changes_result(synthetic, prior):
-    S, pS, N, data = synthetic
-    _, B1, _ = foster_operator(S, pS, N, data, prior=prior)
-    _, B2, _ = foster_operator(
-        S, pS, N, data, prior=prior, normalize_n=True
-    )
-    assert not np.allclose(B1, B2)
-
-
-def test_normalize_n_can_degenerate_noise_weighted(synthetic):
-    S, pS, N, data = synthetic
-    with pytest.raises(ValueError, match="degenerate"):
-        foster_operator(
-            S, pS, N, 1e-6 * data, prior="noise_weighted", normalize_n=True
-        )
 
 
 def test_full_scope_matches_reference_formula(synthetic):

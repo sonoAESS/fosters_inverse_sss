@@ -24,7 +24,7 @@ foster_sss/                 Python package
   basis.py                  SSS basis construction
   data.py                   Raw loading and channel alignment
   methods.py                standard SSS, Foster's inverse, noise-weighted SSS
-  noise.py                  Noise covariance estimation and normalization
+  noise.py                  Noise covariance estimation
   metrics.py                PSD, band power, correlation, plots
   pipeline.py               End-to-end comparison
   reference.py              Validation against the reference implementation
@@ -61,12 +61,6 @@ Run only one estimator:
 ```bash
 python main.py --raw recording.fif --method foster --out results/foster
 python main.py --raw recording.fif --method noise_weighted --out results/nw
-```
-
-Add the unit-trace `N` diagnostic for both estimators:
-
-```bash
-python main.py --raw recording.fif --normalize-n --out results/norm_n
 ```
 
 Estimate `N` from a separate empty-room recording and compute fidelity against
@@ -179,25 +173,17 @@ Recommended workflow for a new dataset:
 | `sss` | none (least squares) | none |
 | `foster` | `np.cov(x_hat)` | `N` |
 | `noise_weighted` | `PSD(np.cov(x_hat) - pS_in @ N @ pS_in.T) / trace(...)` | `N` |
-| `foster_norm_n` | `np.cov(x_hat)` | `N / trace(N)` |
-| `noise_weighted_norm_n` | de-biased, PSD, trace-normalized | `N / trace(N)` |
 
 `x_hat = pS_in @ data` are the initial internal moments. See
 [docs/comparison.md](docs/comparison.md) for the equations and results.
 
-### About `--normalize-n`
+### Why `N` is not normalized
 
-`N` is kept in physical units by default because its scale relative to
-`S_in @ A @ S_in.T` sets the bias-variance balance. Normalizing it to unit
-trace removes that scale; on real MEG data the normalized covariance then
-dominates the signal term. In the example fixture:
-
-- `foster_norm_n` collapses the reconstruction (LF gain ~1.5e24).
-- `noise_weighted_norm_n` produces a degenerate prior and is reported as
-  `degenerate` in `metrics.csv`.
-
-Use `--normalize-n` as a diagnostic, not as a recommended preprocessing
-setting.
+`N` is kept in physical units because its scale relative to
+`S_in @ A @ S_in.T` sets the bias-variance balance. The CLI deliberately does
+not normalize it. On real MEG data, `N / trace(N)` dominates the signal term:
+the raw prior collapses the reconstruction, and the de-biased prior becomes
+degenerate. Normalize only `A`, as in `noise_weighted`.
 
 ## Outputs
 

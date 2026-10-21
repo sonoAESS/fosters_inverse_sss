@@ -15,11 +15,9 @@ implementation` below.
 | `sss` | none (least squares) | none |
 | `foster` | `np.cov(x_hat)` (raw covariance) | `N` |
 | `noise_weighted` | `PSD(np.cov(x_hat) - pS_in @ N @ pS_in.T) / trace(...)` | `N` |
-| `foster_norm_n` | `np.cov(x_hat)` | `N / trace(N)` |
-| `noise_weighted_norm_n` | de-biased, PSD, trace-normalized | `N / trace(N)` |
 
 `x_hat = pS_in @ data` are the initial internal moments. `N` is kept in
-physical units by default; only `A` is normalized in `noise_weighted`.
+physical units; only `A` is normalized in `noise_weighted`.
 
 ## Equations
 
@@ -61,12 +59,6 @@ python main.py --raw raw.fif --method foster --out results/foster
 python main.py --raw raw.fif --method noise_weighted --out results/noise_weighted
 ```
 
-Add the unit-trace `N` diagnostic for both methods:
-
-```bash
-python main.py --raw raw.fif --normalize-n --out results/norm_n
-```
-
 Use a separate recording for `N`, a saved covariance, or a baseline window:
 
 ```bash
@@ -97,7 +89,6 @@ Options:
 - `--noise-tmin/--noise-tmax`: segment used for `N` (not with `--noise-cov`).
 - `--l-freq/--h-freq`: optional filtering before the comparison.
 - `--clean`: optional clean recording for a fidelity reference.
-- `--normalize-n`: also run both priors with `N / trace(N)`.
 - `--save-fif`: save one FIF per method.
 
 Each run writes `metrics.csv` and `psd.png` to the output directory, plus
@@ -159,43 +150,34 @@ noise:
 | `sss` | 2.84 | 1.000 |
 | `foster` | 42.56 | 0.017 |
 | `noise_weighted` | 59.61 | 0.388 |
-| `foster_norm_n` | 1.51e24 | 0.002 |
-| `noise_weighted_norm_n` | degenerate | degenerate |
 
 The raw prior (`foster`) over-suppresses when `N` is estimated from the same
 clean data. The de-biased and trace-normalized prior (`noise_weighted`)
 suppresses less and keeps a higher correlation with standard SSS.
 
-## What happens when `N` is normalized
+## Why `N` is not normalized
 
-`--normalize-n` replaces `N` with `N / trace(N)`, so the noise covariance has
-unit trace and its absolute physical scale is lost. It is applied to both the
-prior de-biasing and the estimator:
+This tool does not normalize `N`. Replacing it with `N / trace(N)` would remove
+its physical scale, which is what sets the bias-variance balance:
 
 ```text
-foster_norm_n:          B = A @ S_in.T @ (S_in @ A @ S_in.T + N/trace(N))^-1
-noise_weighted_norm_n:  X = Cov(x_hat) - pS_in @ (N/trace(N)) @ pS_in.T
+B = A @ S_in.T @ (S_in @ A @ S_in.T + N)^-1
 ```
 
 On real MEG data, `S_in @ A @ S_in.T` is on the order of `1e-24` (T²), while
-`N / trace(N)` has trace 1. The normalized noise term therefore dominates:
+`N / trace(N)` has trace 1. The normalized noise term therefore dominates: the
+raw prior collapses the reconstruction, and the de-biased prior becomes
+degenerate because `pS_in @ (N/trace(N)) @ pS_in.T` is much larger than
+`Cov(x_hat)`.
 
-- `foster_norm_n` collapses the reconstruction: LF gain ~`1.5e24` and
-  correlation ~0.002. The estimator is effectively `A @ S_in.T @ N^-1`.
-- `noise_weighted_norm_n` cannot be computed: the de-biasing term
-  `pS_in @ N @ pS_in.T` is much larger than `Cov(x_hat)`, so the prior trace
-  becomes negative. The run reports `status=degenerate` in `metrics.csv`
-  instead of aborting the whole comparison.
-
-Conclusion: `N` should stay in physical units. Normalize `A` only, as in
-`noise_weighted`. `--normalize-n` is a diagnostic that shows why the scale of
-`N` matters, not a recommended production setting.
+Conclusion: `N` stays in physical units. Normalize only `A`, as in
+`noise_weighted`.
 
 ## Historical fidelity check
 
 The following table comes from the original comparison run with an injected
-OPM-like low-frequency artifact. It predates the `--normalize-n` diagnostic
-and is kept as a reference for the unnormalized methods:
+OPM-like low-frequency artifact. It is kept as a reference for the
+unnormalized methods:
 
 | method | LF gain | r vs clean SSS |
 |---|---:|---:|
