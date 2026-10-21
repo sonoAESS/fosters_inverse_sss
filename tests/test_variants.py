@@ -172,3 +172,11 @@ def test_normalize_n_changes_result(synthetic, prior):
         S, pS, N, data, prior=prior, normalize_n=True
     )
     assert not np.allclose(B1, B2)
+
+
+def test_normalize_n_can_degenerate_noise_weighted(synthetic):
+    S, pS, N, data = synthetic
+    with pytest.raises(ValueError, match="degenerate"):
+        foster_operator(
+            S, pS, N, 1e-6 * data, prior="noise_weighted", normalize_n=True
+        )
