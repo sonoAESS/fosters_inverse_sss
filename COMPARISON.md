@@ -53,7 +53,8 @@ Options:
   projection (ignored with `--noise-cov`).
 - `--noise-cov`: saved covariance used as `N`; channels are reordered to match
   the raw file.
-- `--regularize in|in_argmax|None`: shared SSS regularization.
+- `--regularize in|in_argmax|None`: shared SSS regularization.  `None` is
+  rejected when the basis is too ill-conditioned; use `in` for those files.
 - `--origin auto|x,y,z`: shared SSS origin.
 - `--tmin/--tmax`: segment used for the comparison.
 - `--noise-tmin/--noise-tmax`: segment used for `N` (not with `--noise-cov`).

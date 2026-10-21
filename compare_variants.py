@@ -220,13 +220,21 @@ def main():
     if args.tmin is not None or args.tmax is not None:
         raw.crop(tmin=args.tmin, tmax=args.tmax)
 
-    S, pS, reg_moments, n_use_in, coord_frame = compute_basis(
-        raw,
-        origin=args.origin,
-        int_order=args.int_order,
-        ext_order=args.ext_order,
-        regularize=regularize,
-    )
+    try:
+        S, pS, reg_moments, n_use_in, coord_frame = compute_basis(
+            raw,
+            origin=args.origin,
+            int_order=args.int_order,
+            ext_order=args.ext_order,
+            regularize=regularize,
+        )
+    except RuntimeError as exc:
+        if regularize is None:
+            raise RuntimeError(
+                "The SSS basis with --regularize None is ill-conditioned for "
+                "this file; use --regularize in (the MNE-Python default)."
+            ) from exc
+        raise
     S_in = S[:, :n_use_in]
     pS_in = pS[:n_use_in]
     phi = raw.get_data()
