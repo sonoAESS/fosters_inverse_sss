@@ -1,22 +1,13 @@
-#!/usr/bin/env python3
-"""Foster's inverse variants used to compare against the original script.
-
-The original ``fosters_inverse_sss.py`` is left untouched.  This module adds
-the de-biased and trace-normalized prior developed in the MNE-Python
-integration, plus a literal port of the original raw-covariance prior so both
-can be evaluated with the same SSS basis and the same noise covariance.
-
-``N`` is the sensor noise covariance in physical units and is *not*
-normalized.  Only the moment prior ``A`` is normalized (to unit trace) in the
-``"mne"`` variant.
-"""
+"""Foster's inverse and noise-weighted SSS estimators."""
 
 from __future__ import annotations
 
 import numpy as np
 from scipy.linalg import eigh, pinv
 
-import mne
+from .noise import normalize_noise_cov
+
+PRIORS = ("foster", "noise_weighted")
 
 
 def _validate_inputs(S_in, pS_in, N, data):
@@ -44,7 +35,7 @@ def _validate_inputs(S_in, pS_in, N, data):
     return S_in, pS_in, N, data
 
 
-def foster_prior(x_hat, pS_in, N, *, prior="mne", normalize=True, psd=True):
+def foster_prior(x_hat, pS_in, N, *, prior="noise_weighted", normalize=True, psd=True):
     """Estimate the moment prior ``A``.
 
     Parameters
@@ -54,25 +45,30 @@ def foster_prior(x_hat, pS_in, N, *, prior="mne", normalize=True, psd=True):
     pS_in : ndarray, shape (n_mom, n_ch)
         Least-squares pseudoinverse of the internal basis.
     N : ndarray, shape (n_ch, n_ch)
-        Sensor noise covariance in physical units.  It is used as-is.
-    prior : "mne" | "xan"
-        ``"mne"`` removes the noise contribution from the data covariance,
-        projects onto the PSD cone, and optionally normalizes the trace.
-        ``"xan"`` uses the raw covariance, as in the original script.
+        Sensor noise covariance in physical units.  It is used as-is; pass
+        ``normalize_noise_cov(N)`` to use a unit-trace covariance.
+    prior : "noise_weighted" | "foster"
+        ``"noise_weighted"`` removes the noise contribution from the data
+        covariance, projects onto the PSD cone, and optionally normalizes the
+        trace.  ``"foster"`` uses the raw covariance, as in the original
+        script.
     normalize : bool
-        Normalize ``A`` to unit trace (``"mne"`` only).
+        Normalize ``A`` to unit trace (``"noise_weighted"`` only).
     psd : bool
-        Project the de-biased covariance onto the PSD cone (``"mne"`` only).
+        Project the de-biased covariance onto the PSD cone
+        (``"noise_weighted"`` only).
 
     Returns
     -------
     A : ndarray, shape (n_mom, n_mom)
         Moment prior.
     """
-    if prior not in ("mne", "xan"):
-        raise ValueError(f"prior must be 'mne' or 'xan', got {prior!r}")
+    if prior not in PRIORS:
+        raise ValueError(
+            f"prior must be 'noise_weighted' or 'foster', got {prior!r}"
+        )
     moments_cov = np.cov(x_hat)
-    if prior == "xan":
+    if prior == "foster":
         return moments_cov
     X = (moments_cov + moments_cov.T) / 2 - pS_in @ N @ pS_in.T
     if psd:
@@ -93,10 +89,11 @@ def foster_operator(
     N,
     data,
     *,
-    prior="mne",
+    prior="noise_weighted",
     normalize=True,
     psd=True,
     affine=True,
+    normalize_n=False,
 ):
     """Apply Foster's inverse to the internal subspace.
 
@@ -107,18 +104,22 @@ def foster_operator(
     pS_in : ndarray, shape (n_mom, n_ch)
         Least-squares pseudoinverse of ``S_in``.
     N : ndarray, shape (n_ch, n_ch)
-        Sensor noise covariance in physical units.  It is not normalized.
+        Sensor noise covariance in physical units.
     data : ndarray, shape (n_ch, n_times)
         Sensor data of the segment.
-    prior : "mne" | "xan"
-        Prior variant.  ``"mne"`` is the de-biased, PSD-projected and
-        trace-normalized prior; ``"xan"`` is the original raw covariance.
+    prior : "noise_weighted" | "foster"
+        Prior variant.  ``"noise_weighted"`` is the de-biased, PSD-projected
+        and trace-normalized prior; ``"foster"`` is the original raw
+        covariance.
     normalize : bool
-        Normalize the ``"mne"`` prior to unit trace.
+        Normalize the ``"noise_weighted"`` prior to unit trace.
     psd : bool
-        Project the ``"mne"`` prior onto the PSD cone.
+        Project the ``"noise_weighted"`` prior onto the PSD cone.
     affine : bool
         Add the affine term that preserves the mean moments.
+    normalize_n : bool
+        Divide ``N`` by its trace before building both the prior and the
+        estimator.
 
     Returns
     -------
@@ -130,10 +131,10 @@ def foster_operator(
         Affine term (zeros when ``affine=False``).
     """
     S_in, pS_in, N, data = _validate_inputs(S_in, pS_in, N, data)
+    if normalize_n:
+        N = normalize_noise_cov(N)
     x_hat = pS_in @ data
-    A = foster_prior(
-        x_hat, pS_in, N, prior=prior, normalize=normalize, psd=psd
-    )
+    A = foster_prior(x_hat, pS_in, N, prior=prior, normalize=normalize, psd=psd)
     B = A @ S_in.T @ pinv(S_in @ A @ S_in.T + N, check_finite=False)
     if affine:
         mean_moments = x_hat.mean(axis=1)
@@ -162,80 +163,3 @@ def standard_sss(S_in, pS_in, data):
             f"data must have shape {(S_in.shape[0], 'n_times')}, got {data.shape}"
         )
     return np.real(S_in @ (pS_in @ data))
-
-
-def compute_basis(
-    raw,
-    *,
-    origin="auto",
-    int_order=8,
-    ext_order=3,
-    regularize="in",
-    ignore_ref=True,
-    mag_scale=100.0,
-):
-    """Compute the SSS basis using the same parameters for both variants."""
-    if raw.info["bads"]:
-        raise ValueError(
-            "Drop bad channels before computing the basis; got "
-            f"{raw.info['bads']}"
-        )
-    coord_frame = "head" if raw.info["dev_head_t"] is not None else "meg"
-    S, pS, reg_moments, n_use_in = mne.preprocessing.compute_maxwell_basis(
-        raw.info,
-        origin=origin,
-        int_order=int_order,
-        ext_order=ext_order,
-        calibration=None,
-        coord_frame=coord_frame,
-        regularize=regularize,
-        ignore_ref=ignore_ref,
-        bad_condition="error",
-        mag_scale=mag_scale,
-        extended_proj=(),
-        verbose=False,
-    )
-    return S, pS, reg_moments, n_use_in, coord_frame
-
-
-def compute_noise_cov(
-    raw,
-    *,
-    noise_type="E",
-    tmin=None,
-    tmax=None,
-    duration=10.0,
-):
-    """Compute the sensor noise covariance used by both variants.
-
-    ``noise_type="E"`` follows the original empirical covariance; ``"OTP"``
-    follows the oversampled temporal projection estimate.  The returned matrix
-    is in physical units and is not normalized.
-    """
-    if noise_type not in ("E", "OTP"):
-        raise ValueError(f"noise_type must be 'E' or 'OTP', got {noise_type!r}")
-    raw_meg = raw.copy().pick_types(
-        meg=True, eeg=False, eog=False, stim=False, exclude="bads"
-    )
-    if raw_meg.info["bads"]:
-        raise ValueError(
-            "Drop bad channels before computing the noise covariance; got "
-            f"{raw_meg.info['bads']}"
-        )
-    if noise_type == "E":
-        cov = mne.compute_raw_covariance(
-            raw_meg,
-            tmin=tmin,
-            tmax=tmax,
-            rank="info",
-            method="empirical",
-            verbose=False,
-        )
-        return np.asarray(cov["data"])
-    import sklearn.covariance
-
-    raw_otp = mne.preprocessing.oversampled_temporal_projection(
-        raw_meg, duration=duration, verbose=False
-    )
-    diff = raw_meg.get_data(picks="meg") - raw_otp.get_data(picks="meg")
-    return sklearn.covariance.empirical_covariance(diff.T)
