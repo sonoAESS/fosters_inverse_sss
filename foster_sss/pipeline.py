@@ -15,6 +15,7 @@ from .data import align_channels, load_raw, save_raw
 from .metrics import lf_band_power, pearson, plot_psd
 from .methods import foster_operator, standard_sss
 from .noise import compute_noise_cov
+from .reference import check_against_reference
 
 
 @dataclass
@@ -37,10 +38,13 @@ class ComparisonConfig:
     noise_type: str = "E"
     regularize: str | None = "in"
     origin: str | tuple[float, float, float] = "auto"
+    coord_frame: str | None = None
+    basis_scope: str = "internal"
     int_order: int = 8
     ext_order: int = 3
     duration: float = 10.0
     save_fif: bool = False
+    check_reference: bool = False
 
 
 def selected_priors(method):
@@ -85,7 +89,9 @@ def _load_noise(config, raw):
     )
 
 
-def _evaluate_method(S_in, pS_in, N, phi, *, prior, normalize_n):
+def _evaluate_method(
+    S_in, pS_in, N, phi, *, prior, normalize_n, basis_scope="internal", n_use_in=None
+):
     try:
         recon, _, _ = foster_operator(
             S_in,
@@ -95,6 +101,8 @@ def _evaluate_method(S_in, pS_in, N, phi, *, prior, normalize_n):
             prior=prior,
             affine=True,
             normalize_n=normalize_n,
+            basis_scope=basis_scope,
+            n_use_in=n_use_in,
         )
     except ValueError as exc:
         if "degenerate" not in str(exc):
@@ -115,7 +123,9 @@ def run_comparison(config):
     -------
     result : dict
         Keys ``results`` (method name to reconstructed data), ``rows``
-        (metric dictionaries), and ``out_dir``.
+        (metric dictionaries), ``out_dir``, and ``reference_check``
+        (validation result against the reference implementation, or
+        ``None``).
     """
     if config.method not in ("both", "foster", "noise_weighted", "sss"):
         raise ValueError(f"Unknown method {config.method!r}")
@@ -136,6 +146,7 @@ def run_comparison(config):
             int_order=config.int_order,
             ext_order=config.ext_order,
             regularize=config.regularize,
+            coord_frame=config.coord_frame,
         )
     except RuntimeError as exc:
         if config.regularize is None:
@@ -147,6 +158,15 @@ def run_comparison(config):
 
     S_in = S[:, :n_use_in]
     pS_in = pS[:n_use_in]
+    if config.basis_scope == "full":
+        S_use, pS_use = S, pS
+    elif config.basis_scope == "internal":
+        S_use, pS_use = S_in, pS_in
+    else:
+        raise ValueError(
+            f"basis_scope must be 'internal' or 'full', got "
+            f"{config.basis_scope!r}"
+        )
     phi = raw.get_data()
     if phi.shape[0] != S_in.shape[0]:
         raise RuntimeError(
@@ -160,12 +180,14 @@ def run_comparison(config):
         for normalize_n in (False, True) if config.normalize_n else (False,):
             name = _method_label(prior, normalize_n)
             recon, status, note = _evaluate_method(
-                S_in,
-                pS_in,
+                S_use,
+                pS_use,
                 N,
                 phi,
                 prior=prior,
                 normalize_n=normalize_n,
+                basis_scope=config.basis_scope,
+                n_use_in=n_use_in,
             )
             statuses[name] = (status, note)
             if recon is not None:
@@ -235,7 +257,7 @@ def run_comparison(config):
 
     print(
         f"basis: S={S.shape}, n_use_in={n_use_in}, "
-        f"coord_frame={coord_frame}, N={N.shape}"
+        f"coord_frame={coord_frame}, scope={config.basis_scope}, N={N.shape}"
     )
     header = f"{'method':>23} | {'LF gain':>8} | {'r vs SSS':>9} | status"
     if clean_data is not None:
@@ -262,4 +284,69 @@ def run_comparison(config):
         for name, data in results.items():
             save_raw(data, raw.info, out / f"{name}_meg.fif")
     print(f"wrote {out / 'metrics.csv'} and {out / 'psd.png'}")
-    return {"results": results, "rows": rows, "out_dir": out}
+    reference_check = None
+    if config.check_reference:
+        reference_check = _run_reference_check(raw, N, config, out)
+    return {
+        "results": results,
+        "rows": rows,
+        "out_dir": out,
+        "reference_check": reference_check,
+    }
+
+
+def _run_reference_check(raw, N, config, out):
+    """Validate our foster variant against the reference implementation."""
+    print(
+        "reference check: using the reference implementation's basis settings "
+        "(origin=0,0,0, coord_frame=meg, regularize=None)"
+    )
+    fields = [
+        "status",
+        "basis_scope",
+        "max_abs_diff",
+        "rel_error",
+        "pearson",
+        "n_channels",
+        "n_times",
+        "n_use_in",
+        "note",
+    ]
+    try:
+        result = check_against_reference(raw, N, config.noise_type)
+    except Exception as exc:
+        row = {
+            "status": "error",
+            "basis_scope": "",
+            "max_abs_diff": "",
+            "rel_error": "",
+            "pearson": "",
+            "n_channels": "",
+            "n_times": "",
+            "n_use_in": "",
+            "note": f"{type(exc).__name__}: {exc}",
+        }
+        print(f"reference check failed: {row['note']}")
+    else:
+        row = {
+            "status": "ok",
+            "basis_scope": result["basis_scope"],
+            "max_abs_diff": result["max_abs_diff"],
+            "rel_error": result["rel_error"],
+            "pearson": result["pearson"],
+            "n_channels": result["n_channels"],
+            "n_times": result["n_times"],
+            "n_use_in": result["n_use_in"],
+            "note": "",
+        }
+        print(
+            f"reference check: max|diff|={result['max_abs_diff']:.3e}, "
+            f"rel={result['rel_error']:.3e}, "
+            f"r={result['pearson']:.12f}, scope={result['basis_scope']}"
+        )
+    with (out / "reference_check.csv").open("w", newline="") as fid:
+        writer = csv.DictWriter(fid, fieldnames=fields)
+        writer.writeheader()
+        writer.writerow(row)
+    print(f"wrote {out / 'reference_check.csv'}")
+    return row

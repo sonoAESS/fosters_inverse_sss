@@ -12,6 +12,7 @@ def compute_basis(
     int_order=8,
     ext_order=3,
     regularize="in",
+    coord_frame=None,
     ignore_ref=True,
     mag_scale=100.0,
 ):
@@ -29,6 +30,10 @@ def compute_basis(
         External expansion order.
     regularize : "in" | "in_argmax" | None
         Regularization passed to MNE-Python.
+    coord_frame : "head" | "meg" | None
+        Coordinate frame used to interpret ``origin``.  ``None`` selects
+        ``"head"`` when the raw has a device-to-head transform and ``"meg"``
+        otherwise.
     ignore_ref : bool
         Ignore reference channels when computing the basis.
     mag_scale : float
@@ -52,7 +57,12 @@ def compute_basis(
             "Drop bad channels before computing the basis; got "
             f"{raw.info['bads']}"
         )
-    coord_frame = "head" if raw.info["dev_head_t"] is not None else "meg"
+    if coord_frame is None:
+        coord_frame = "head" if raw.info["dev_head_t"] is not None else "meg"
+    if coord_frame not in ("head", "meg"):
+        raise ValueError(
+            f"coord_frame must be 'head' or 'meg', got {coord_frame!r}"
+        )
     S, pS, reg_moments, n_use_in = mne.preprocessing.compute_maxwell_basis(
         raw.info,
         origin=origin,

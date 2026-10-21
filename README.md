@@ -12,7 +12,7 @@ subspace:
 Both methods use the same SSS basis, the same sensor noise covariance `N`, and
 the same affine term. Only the moment prior `A` changes.
 
-The original `fosters_inverse_sss.py` is **not modified**.
+The reference `fosters_inverse_sss.py` is **not modified**.
 
 Reference: McPherson et al., *Noise Optimization of Basic Signal Component
 Extraction for Cryogenic and On-Scalp Magnetoencephalography (MEG)*, 2026.
@@ -27,6 +27,7 @@ foster_sss/                 Python package
   noise.py                  Noise covariance estimation and normalization
   metrics.py                PSD, band power, correlation, plots
   pipeline.py               End-to-end comparison
+  reference.py              Validation against the reference implementation
   cli.py                    Command-line interface
 main.py                     Entry point
 tests/                      Unit tests
@@ -104,6 +105,43 @@ Show all options:
 python main.py --help
 ```
 
+## Comparing against the reference implementation
+
+`--reference-compat` reproduces the reference implementation's hard-coded
+basis settings:
+`origin=(0, 0, 0)`, `coord_frame="meg"`, `regularize=None`, and the full
+moment space when `--noise-type OTP` is selected. The preset overrides
+`--origin`, `--coord-frame`, `--regularize`, and `--basis-scope`.
+`--check-reference` runs the untouched `fosters_inverse_sss.py` on the same
+data and `N`, and writes `reference_check.csv`:
+
+```bash
+python main.py \
+  --raw recording.fif \
+  --tmin 0 --tmax 4 \
+  --noise-tmin 0 --noise-tmax 4 \
+  --reference-compat --check-reference \
+  --out results/reference_check
+```
+
+The check calls the reference implementation's `_do_inverse` directly with
+the same `N` (use `--noise-tmin/--noise-tmax` to mirror its covariance window).
+On the testing fixture it agrees to floating-point precision:
+
+| `ntype` | basis scope | max abs diff | relative error | Pearson r |
+|---|---|---:|---:|---:|
+| `E` | internal | 1.53e-23 | 6.60e-14 | 1.000000000000 |
+| `OTP` | full | 4.56e-23 | 5.99e-15 | 1.000000000000 |
+
+If the reference implementation raises an ill-conditioned basis error with
+`regularize=None`, `reference_check.csv` records `status=error` and the
+message. That is the same failure the reference implementation would produce
+for that file.
+
+Use `--coord-frame head|meg|auto` and `--basis-scope internal|full` directly if
+you need those settings without the full preset. Reconstruction is always
+limited to the internal subspace.
+
 ## Using other data
 
 `--raw`, `--noise-raw`, and `--clean` accept the following formats:
@@ -168,6 +206,9 @@ Each run writes to `--out`:
 - `metrics.csv`: `method`, `lf_gain`, `lf_power`, `r_vs_sss`, `r_vs_clean`,
   `status`, `note`.
 - `psd.png`: mean PSD per method.
+- `reference_check.csv`: only with `--check-reference`; agreement with the
+  reference implementation (`status`, `basis_scope`, `max_abs_diff`,
+  `rel_error`, `pearson`, `n_channels`, `n_times`, `n_use_in`, `note`).
 - `<method>_meg.fif`: only with `--save-fif`.
 
 `lf_gain` is the factor by which the 0.5-3 Hz power is reduced relative to the
@@ -181,9 +222,8 @@ metrics.
 python -m pytest tests -q
 ```
 
-## Original implementation
+## Reference implementation
 
-`fosters_inverse_sss.py` is the original script by Alexandria McPherson and is
-left unchanged. Its `__main__` example calls `fosters_inverse(raw, Ntmin,
-Ntmax)` without the required `ntype` argument; this project does not use that
-entry point.
+`fosters_inverse_sss.py` is the reference implementation and is left unchanged.
+Its `__main__` example calls `fosters_inverse(raw, Ntmin, Ntmax)` without the
+required `ntype` argument; this project does not use that entry point.

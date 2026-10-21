@@ -1,12 +1,14 @@
 # Comparing Foster's inverse and noise-weighted SSS
 
-This project compares the original `fosters_inverse_sss.py` estimator
-(`foster`) with the MNE-Python integration (`noise_weighted`). The original
-script is **left unchanged**.
+This project compares the reference `fosters_inverse_sss.py` estimator
+(`foster`) with the MNE-Python integration (`noise_weighted`). The reference
+implementation is **left unchanged**.
 
-All methods share the same SSS basis, the same sensor data, the same sensor
-noise covariance `N`, and the same affine term. Only the moment prior `A`
-changes:
+By default all methods share the same SSS basis, the same sensor data, the
+same sensor noise covariance `N`, and the same affine term. Only the moment
+prior `A` changes. The `--reference-compat` preset changes the basis settings
+to match the reference implementation; see `Matching the reference
+implementation` below.
 
 | method | moment prior `A` | `N` |
 |---|---|---|
@@ -82,6 +84,15 @@ Options:
 - `--regularize in|in_argmax|None`: shared SSS regularization. `None` is
   rejected when the basis is too ill-conditioned; use `in` for those files.
 - `--origin auto|x,y,z`: shared SSS origin.
+- `--coord-frame auto|head|meg`: frame used to interpret `--origin`. `auto`
+  uses head when `dev_head_t` is present, otherwise meg.
+- `--basis-scope internal|full`: moments used by the prior and estimator.
+  `full` includes external moments; reconstruction is always internal.
+- `--reference-compat`: preset for the reference implementation's basis
+  (`origin=0,0,0`,
+  `coord_frame=meg`, `regularize=None`, full moments for OTP).
+- `--check-reference`: validate against `fosters_inverse_sss.py` and write
+  `reference_check.csv`.
 - `--tmin/--tmax`: segment used for the comparison.
 - `--noise-tmin/--noise-tmax`: segment used for `N` (not with `--noise-cov`).
 - `--l-freq/--h-freq`: optional filtering before the comparison.
@@ -89,7 +100,54 @@ Options:
 - `--normalize-n`: also run both priors with `N / trace(N)`.
 - `--save-fif`: save one FIF per method.
 
-Each run writes `metrics.csv` and `psd.png` to the output directory.
+Each run writes `metrics.csv` and `psd.png` to the output directory, plus
+`reference_check.csv` when `--check-reference` is used.
+
+## Matching the reference implementation
+
+The reference implementation hard-codes a different basis configuration from
+the MNE-Python default:
+
+```python
+compute_maxwell_basis(
+    raw.info,
+    origin=(0, 0, 0),
+    coord_frame="meg",
+    regularize=None,
+    ...
+)
+```
+
+With `--reference-compat`, this package uses exactly those settings. For
+`ntype="E"` the prior and estimator use the internal moments; for
+`ntype="OTP"` they use the full moment space and reconstruct only the internal
+subspace:
+
+```text
+E:    S_use = S[:, :n_use_in],   pS_use = pS[:n_use_in, :]
+OTP:  S_use = S,                 pS_use = pS
+
+A = Cov(pS_use @ phi)
+B = A @ S_use.T @ (S_use @ A @ S_use.T + N)^-1
+phi_hat = S[:, :n_use_in] @ (B @ phi + b)[:n_use_in, :]
+```
+
+`--check-reference` imports the untouched implementation, calls its
+`_do_inverse` with the same data and `N`, and compares the two
+reconstructions. It does not call the `fosters_inverse` wrapper, which also
+computes `N` and creates Maxwell-filtered info. Use
+`--noise-tmin/--noise-tmax` to mirror the wrapper's covariance window. On the
+testing fixture (`test_move_anon_raw.fif`, 0-4 s, `N` from the same segment):
+
+| `ntype` | basis scope | max abs diff | relative error | Pearson r |
+|---|---|---:|---:|---:|
+| `E` | internal | 1.53e-23 | 6.60e-14 | 1.000000000000 |
+| `OTP` | full | 4.56e-23 | 5.99e-15 | 1.000000000000 |
+
+The remaining difference is floating-point round-off. If the reference
+implementation raises an ill-conditioned basis error, `reference_check.csv`
+records `status=error` with the message; that is the same failure the
+implementation would produce.
 
 ## Example on the testing fixture
 
@@ -155,10 +213,16 @@ same.
 - The comparison isolates the moment prior. It estimates the data covariance
   with `np.cov` over the selected segment; it does not chunk the data, exclude
   annotated segments, or apply cross-talk correction. The MNE-Python
-  integration does those steps separately.
+  integration does those steps separately. The reference implementation also
+  does not chunk, exclude annotations, or apply cross-talk correction.
+- The default basis follows MNE-Python (`origin="auto"`, head frame when a
+  `dev_head_t` is present). This is not the reference implementation's basis.
+  Use
+  `--reference-compat` for a like-for-like comparison with
+  `fosters_inverse_sss.py`.
 - `fosters_inverse_sss.py` is not modified. Its `__main__` example currently
   calls `fosters_inverse(raw, Ntmin, Ntmax)` without `ntype`; this project does
   not use that entry point.
-- The original repository has no license file. This comparison code is
-  provided inside this repository; do not copy the original code elsewhere
-  without permission from its author.
+- The upstream repository has no license file. This comparison code is
+  provided inside this repository; do not copy the reference code elsewhere
+  without permission from the copyright holder.

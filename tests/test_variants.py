@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 import pytest
 from numpy.testing import assert_allclose
@@ -180,3 +182,79 @@ def test_normalize_n_can_degenerate_noise_weighted(synthetic):
         foster_operator(
             S, pS, N, 1e-6 * data, prior="noise_weighted", normalize_n=True
         )
+
+
+def test_full_scope_matches_reference_formula(synthetic):
+    S, pS, N, data = synthetic
+    n_use_in = 3
+    recon, B, b = foster_operator(
+        S,
+        pS,
+        N,
+        data,
+        prior="foster",
+        basis_scope="full",
+        n_use_in=n_use_in,
+    )
+    x_hat = pS @ data
+    A = np.cov(x_hat)
+    B_ref = A @ S.T @ pinv(S @ A @ S.T + N, check_finite=False)
+    mean_moments = x_hat.mean(axis=1)
+    b_ref = mean_moments - B_ref @ S @ mean_moments
+    moments = B_ref @ data + b_ref[:, None]
+    recon_ref = np.real(S[:, :n_use_in] @ moments[:n_use_in])
+    assert_allclose(B, B_ref)
+    assert_allclose(b, b_ref)
+    assert_allclose(recon, recon_ref)
+
+
+def test_full_scope_reconstructs_internal_only(synthetic):
+    S, pS, N, data = synthetic
+    recon, B, _ = foster_operator(
+        S, pS, N, data, prior="foster", basis_scope="full", n_use_in=2
+    )
+    assert recon.shape == data.shape
+    assert B.shape == (S.shape[1], S.shape[0])
+
+
+def test_full_scope_requires_valid_n_use_in(synthetic):
+    S, pS, N, data = synthetic
+    with pytest.raises(ValueError, match="n_use_in"):
+        foster_operator(S, pS, N, data, basis_scope="full")
+    with pytest.raises(ValueError, match="n_use_in"):
+        foster_operator(S, pS, N, data, basis_scope="full", n_use_in=99)
+
+
+def test_invalid_basis_scope_raises(synthetic):
+    S, pS, N, data = synthetic
+    with pytest.raises(ValueError, match="basis_scope"):
+        foster_operator(S, pS, N, data, basis_scope="external")
+
+
+def test_reference_script_is_available():
+    from foster_sss.reference import _load_reference
+
+    assert hasattr(_load_reference(), "_do_inverse")
+
+
+def test_check_against_reference_on_testing_fixture():
+    path = (
+        Path.home()
+        / "mne_data"
+        / "MNE-testing-data"
+        / "SSS"
+        / "test_move_anon_raw.fif"
+    )
+    if not path.exists():
+        pytest.skip("MNE testing-data fixture is not available")
+    from foster_sss.data import load_raw
+    from foster_sss.noise import compute_noise_cov
+    from foster_sss.reference import check_against_reference
+
+    raw = load_raw(path)
+    raw.crop(tmin=0.0, tmax=4.0)
+    N = compute_noise_cov(raw, noise_type="E", tmin=0.0, tmax=4.0)
+    for ntype in ("E", "OTP"):
+        result = check_against_reference(raw, N, ntype)
+        assert result["rel_error"] < 1e-10
+        assert result["pearson"] > 1.0 - 1e-10

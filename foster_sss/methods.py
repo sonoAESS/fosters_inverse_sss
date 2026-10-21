@@ -94,13 +94,16 @@ def foster_operator(
     psd=True,
     affine=True,
     normalize_n=False,
+    basis_scope="internal",
+    n_use_in=None,
 ):
-    """Apply Foster's inverse to the internal subspace.
+    """Apply Foster's inverse.
 
     Parameters
     ----------
     S_in : ndarray, shape (n_ch, n_mom)
-        Internal SSS basis.
+        Internal SSS basis, or the full (internal + external) basis when
+        ``basis_scope="full"``.
     pS_in : ndarray, shape (n_mom, n_ch)
         Least-squares pseudoinverse of ``S_in``.
     N : ndarray, shape (n_ch, n_ch)
@@ -120,6 +123,13 @@ def foster_operator(
     normalize_n : bool
         Divide ``N`` by its trace before building both the prior and the
         estimator.
+    basis_scope : "internal" | "full"
+        ``"internal"`` uses only internal moments for the prior and the
+        estimator.  ``"full"`` builds the prior and the estimator in the
+        full moment space and reconstructs the internal subspace, matching
+        the reference implementation's ``ntype="OTP"`` path.
+    n_use_in : int | None
+        Number of internal moments.  Required when ``basis_scope="full"``.
 
     Returns
     -------
@@ -131,6 +141,21 @@ def foster_operator(
         Affine term (zeros when ``affine=False``).
     """
     S_in, pS_in, N, data = _validate_inputs(S_in, pS_in, N, data)
+    if basis_scope not in ("internal", "full"):
+        raise ValueError(
+            "basis_scope must be 'internal' or 'full', "
+            f"got {basis_scope!r}"
+        )
+    if basis_scope == "full":
+        if n_use_in is None:
+            raise ValueError("n_use_in is required when basis_scope='full'")
+        if not 0 < n_use_in <= S_in.shape[1]:
+            raise ValueError(
+                f"n_use_in must be in [1, {S_in.shape[1]}], got {n_use_in}"
+            )
+        n_recon = int(n_use_in)
+    else:
+        n_recon = S_in.shape[1]
     if normalize_n:
         N = normalize_noise_cov(N)
     x_hat = pS_in @ data
@@ -142,7 +167,7 @@ def foster_operator(
     else:
         b = np.zeros(S_in.shape[1])
     moments = B @ data + b[:, None]
-    recon = np.real(S_in @ moments)
+    recon = np.real(S_in[:, :n_recon] @ moments[:n_recon])
     return recon, B, b
 
 

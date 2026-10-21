@@ -80,6 +80,40 @@ def build_parser():
         help="SSS regularization (shared by all methods).",
     )
     parser.add_argument("--origin", type=parse_origin, default="auto")
+    parser.add_argument(
+        "--coord-frame",
+        choices=("auto", "head", "meg"),
+        default="auto",
+        help=(
+            "Frame used to interpret --origin. 'auto' uses head when a "
+            "dev_head_t is present, otherwise meg."
+        ),
+    )
+    parser.add_argument(
+        "--basis-scope",
+        choices=("internal", "full"),
+        default="internal",
+        help=(
+            "Moments used by the prior and estimator. 'full' includes "
+            "external moments; reconstruction is always internal."
+        ),
+    )
+    parser.add_argument(
+        "--reference-compat",
+        action="store_true",
+        help=(
+            "Use the reference implementation's settings: origin=0,0,0, "
+            "coord_frame=meg, regularize=None, and full moments for OTP."
+        ),
+    )
+    parser.add_argument(
+        "--check-reference",
+        action="store_true",
+        help=(
+            "Validate the foster variant against fosters_inverse_sss.py "
+            "and write reference_check.csv."
+        ),
+    )
     parser.add_argument("--int-order", type=int, default=8)
     parser.add_argument("--ext-order", type=int, default=3)
     parser.add_argument(
@@ -100,6 +134,15 @@ def build_parser():
 def main(argv=None):
     """Run the comparison CLI."""
     args = build_parser().parse_args(argv)
+    origin = args.origin
+    coord_frame = None if args.coord_frame == "auto" else args.coord_frame
+    regularize = None if args.regularize == "None" else args.regularize
+    basis_scope = args.basis_scope
+    if args.reference_compat:
+        origin = (0.0, 0.0, 0.0)
+        coord_frame = "meg"
+        regularize = None
+        basis_scope = "full" if args.noise_type == "OTP" else "internal"
     config = ComparisonConfig(
         raw=args.raw,
         out=args.out,
@@ -115,12 +158,15 @@ def main(argv=None):
         l_freq=args.l_freq,
         h_freq=args.h_freq,
         noise_type=args.noise_type,
-        regularize=None if args.regularize == "None" else args.regularize,
-        origin=args.origin,
+        regularize=regularize,
+        origin=origin,
+        coord_frame=coord_frame,
+        basis_scope=basis_scope,
         int_order=args.int_order,
         ext_order=args.ext_order,
         duration=args.duration,
         save_fif=args.save_fif,
+        check_reference=args.check_reference,
     )
     run_comparison(config)
     return 0
