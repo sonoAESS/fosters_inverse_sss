@@ -1,0 +1,164 @@
+# Comparing Foster's inverse and noise-weighted SSS
+
+This project compares the original `fosters_inverse_sss.py` estimator
+(`foster`) with the MNE-Python integration (`noise_weighted`). The original
+script is **left unchanged**.
+
+All methods share the same SSS basis, the same sensor data, the same sensor
+noise covariance `N`, and the same affine term. Only the moment prior `A`
+changes:
+
+| method | moment prior `A` | `N` |
+|---|---|---|
+| `sss` | none (least squares) | none |
+| `foster` | `np.cov(x_hat)` (raw covariance) | `N` |
+| `noise_weighted` | `PSD(np.cov(x_hat) - pS_in @ N @ pS_in.T) / trace(...)` | `N` |
+| `foster_norm_n` | `np.cov(x_hat)` | `N / trace(N)` |
+| `noise_weighted_norm_n` | de-biased, PSD, trace-normalized | `N / trace(N)` |
+
+`x_hat = pS_in @ data` are the initial internal moments. `N` is kept in
+physical units by default; only `A` is normalized in `noise_weighted`.
+
+## Equations
+
+The common estimator is the LMMSE/Wiener inverse of the internal SSS model:
+
+```text
+phi = S_in @ x + n,    n ~ N(0, N),    x ~ N(mu, A)
+
+B = A @ S_in.T @ (S_in @ A @ S_in.T + N)^-1
+b = mu - B @ S_in @ mu
+x_hat = B @ phi + b
+phi_hat = S_in @ x_hat
+```
+
+with `mu = mean(pS_in @ phi)`. Standard SSS is the limit `A^-1 -> 0`.
+
+The only difference between the two original priors is:
+
+```text
+foster:          A = Cov(x_hat)
+
+noise_weighted:  X = Cov(x_hat) - pS_in @ N @ pS_in.T
+                 X = PSD(X)
+                 A = X / trace(X)
+```
+
+## Usage
+
+Run both methods and the standard SSS reference:
+
+```bash
+python main.py --raw raw.fif --out results/run1
+```
+
+Run one method only:
+
+```bash
+python main.py --raw raw.fif --method foster --out results/foster
+python main.py --raw raw.fif --method noise_weighted --out results/noise_weighted
+```
+
+Add the unit-trace `N` diagnostic for both methods:
+
+```bash
+python main.py --raw raw.fif --normalize-n --out results/norm_n
+```
+
+Use a separate recording for `N`, a saved covariance, or a baseline window:
+
+```bash
+python main.py --raw raw.fif --noise-raw empty.fif \
+    --noise-tmin 0 --noise-tmax 60 --out results/empty_room
+python main.py --raw raw.fif --noise-cov empty-cov.fif --out results/cov
+```
+
+Options:
+
+- `--noise-type E|OTP`: empirical covariance or oversampled temporal
+  projection (ignored with `--noise-cov`).
+- `--noise-cov`: saved covariance used as `N`; channels are reordered to match
+  the raw file.
+- `--regularize in|in_argmax|None`: shared SSS regularization. `None` is
+  rejected when the basis is too ill-conditioned; use `in` for those files.
+- `--origin auto|x,y,z`: shared SSS origin.
+- `--tmin/--tmax`: segment used for the comparison.
+- `--noise-tmin/--noise-tmax`: segment used for `N` (not with `--noise-cov`).
+- `--l-freq/--h-freq`: optional filtering before the comparison.
+- `--clean`: optional clean recording for a fidelity reference.
+- `--normalize-n`: also run both priors with `N / trace(N)`.
+- `--save-fif`: save one FIF per method.
+
+Each run writes `metrics.csv` and `psd.png` to the output directory.
+
+## Example on the testing fixture
+
+`test_move_anon_raw.fif`, 0-4 s, `N` from the same 0-4 s segment, no injected
+noise:
+
+| method | LF gain (0.5-3 Hz) | r vs SSS |
+|---|---:|---:|
+| `sss` | 2.84 | 1.000 |
+| `foster` | 42.56 | 0.017 |
+| `noise_weighted` | 59.61 | 0.388 |
+| `foster_norm_n` | 1.51e24 | 0.002 |
+| `noise_weighted_norm_n` | degenerate | degenerate |
+
+The raw prior (`foster`) over-suppresses when `N` is estimated from the same
+clean data. The de-biased and trace-normalized prior (`noise_weighted`)
+suppresses less and keeps a higher correlation with standard SSS.
+
+## What happens when `N` is normalized
+
+`--normalize-n` replaces `N` with `N / trace(N)`, so the noise covariance has
+unit trace and its absolute physical scale is lost. It is applied to both the
+prior de-biasing and the estimator:
+
+```text
+foster_norm_n:          B = A @ S_in.T @ (S_in @ A @ S_in.T + N/trace(N))^-1
+noise_weighted_norm_n:  X = Cov(x_hat) - pS_in @ (N/trace(N)) @ pS_in.T
+```
+
+On real MEG data, `S_in @ A @ S_in.T` is on the order of `1e-24` (T²), while
+`N / trace(N)` has trace 1. The normalized noise term therefore dominates:
+
+- `foster_norm_n` collapses the reconstruction: LF gain ~`1.5e24` and
+  correlation ~0.002. The estimator is effectively `A @ S_in.T @ N^-1`.
+- `noise_weighted_norm_n` cannot be computed: the de-biasing term
+  `pS_in @ N @ pS_in.T` is much larger than `Cov(x_hat)`, so the prior trace
+  becomes negative. The run reports `status=degenerate` in `metrics.csv`
+  instead of aborting the whole comparison.
+
+Conclusion: `N` should stay in physical units. Normalize `A` only, as in
+`noise_weighted`. `--normalize-n` is a diagnostic that shows why the scale of
+`N` matters, not a recommended production setting.
+
+## Historical fidelity check
+
+The following table comes from the original comparison run with an injected
+OPM-like low-frequency artifact. It predates the `--normalize-n` diagnostic
+and is kept as a reference for the unnormalized methods:
+
+| method | LF gain | r vs clean SSS |
+|---|---:|---:|
+| `sss` | 0.12 | 0.942 |
+| `foster` | 133.49 | 0.016 |
+| `noise_weighted` | 96.43 | 0.388 |
+
+The original notebook (`run_foster`, without the affine term) reports
+92.9 / 0.396 for the same injected artifact. The small difference comes from
+the affine term and the MNE-Python version; the prior and `N` handling are the
+same.
+
+## Scope and limitations
+
+- The comparison isolates the moment prior. It estimates the data covariance
+  with `np.cov` over the selected segment; it does not chunk the data, exclude
+  annotated segments, or apply cross-talk correction. The MNE-Python
+  integration does those steps separately.
+- `fosters_inverse_sss.py` is not modified. Its `__main__` example currently
+  calls `fosters_inverse(raw, Ntmin, Ntmax)` without `ntype`; this project does
+  not use that entry point.
+- The original repository has no license file. This comparison code is
+  provided inside this repository; do not copy the original code elsewhere
+  without permission from its author.
